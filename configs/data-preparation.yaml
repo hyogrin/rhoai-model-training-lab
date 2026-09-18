@@ -1,0 +1,46 @@
+# τ-Knowledge Data Preparation Configuration
+# Used by the authoring/operator path to prepare sources
+
+tau_bench:
+  version: "v1.0.1"
+  commit_sha: ""  # Pin after verification
+  install_path: ""
+  domain: "banking_knowledge"
+
+sources:
+  kb_snapshot:
+    output_path: "data/sources/kb/documents.jsonl"
+    preserve_boundaries: true
+    extract_policies: true
+    extract_tool_schemas: true
+
+  policy_extraction:
+    output_path: "data/sources/policies/extracted.jsonl"
+    review_sample_size: 50
+    retain_source_offsets: true
+    retain_document_ids: true
+
+splits:
+  method: "scenario_family"
+  train_ratio: 0.85
+  validation_ratio: 0.15
+  seed: 42
+  contamination_check: true
+  family_isolation: true  # Paraphrases and siblings stay in same split
+
+quality_gates:
+  min_acceptance_rate: 0.70
+  required_types:
+    - policy_qa
+    - policy_application
+    - tool_selection
+    - trajectory
+    - clarification
+  min_tool_examples: 50
+  min_trajectory_examples: 30
+  human_review_sample_size: 20
+
+output:
+  base_path: "data/sources"
+  cache_path: "data/cache/preparation"
+  checkpoint_path: "data/checkpoints/preparation"

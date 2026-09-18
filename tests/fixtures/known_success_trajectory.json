@@ -1,0 +1,66 @@
+{
+  "trajectory_id": "success-banking-001",
+  "task_id": "banking_knowledge_task_12",
+  "trial": 0,
+  "success": true,
+  "reward": 1.0,
+  "domain": "banking_knowledge",
+  "description": "Customer inquires about savings account interest rate and agent correctly retrieves and reports the rate.",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a banking customer service agent. Use the provided tools to help customers with their banking needs."
+    },
+    {
+      "role": "user",
+      "content": "Hi, I'd like to know the current interest rate on my savings account."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_001",
+          "type": "function",
+          "function": {
+            "name": "get_account_details",
+            "arguments": "{\"account_id\": \"SAV-78901\", \"fields\": [\"interest_rate\", \"account_type\"]}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_001",
+      "name": "get_account_details",
+      "content": "{\"account_id\": \"SAV-78901\", \"account_type\": \"savings\", \"interest_rate\": 4.5, \"rate_type\": \"APY\", \"rate_effective_date\": \"2026-07-01\"}"
+    },
+    {
+      "role": "assistant",
+      "content": "Your savings account (SAV-78901) currently has an interest rate of 4.5% APY, effective since July 1, 2026. Is there anything else I can help you with?"
+    },
+    {
+      "role": "user",
+      "content": "No, that's all. Thank you!"
+    },
+    {
+      "role": "assistant",
+      "content": "You're welcome! If you have any other questions about your accounts, feel free to ask anytime. Have a great day!"
+    }
+  ],
+  "actions": ["get_account_details"],
+  "expected_actions": ["get_account_details"],
+  "turns": 3,
+  "tool_calls": 1,
+  "total_tokens": 487,
+  "wall_time_seconds": 2.3,
+  "retrieval_latency_ms": 45.2,
+  "model_latency_ms": 890.5,
+  "scoring": {
+    "action_recall": 1.0,
+    "answer_accuracy": 1.0,
+    "tool_name_accuracy": 1.0,
+    "tool_args_accuracy": 1.0,
+    "grounding_score": 1.0
+  }
+}

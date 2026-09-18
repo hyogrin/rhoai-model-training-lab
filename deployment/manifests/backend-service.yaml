@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhoai-lab-backend
+  namespace: rhoai-lab
+  labels:
+    app: rhoai-lab-backend
+    app.kubernetes.io/name: rhoai-lab-backend
+    app.kubernetes.io/part-of: rhoai-model-training-lab
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    app: rhoai-lab-backend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

@@ -1,0 +1,72 @@
+# RAG and Planning Harness Configuration
+
+retrieval:
+  embedding:
+    model_id: "sentence-transformers/all-MiniLM-L6-v2"
+    endpoint: "${EMBEDDING_ENDPOINT}"  # Leave empty for local CPU model
+    dimension: 384
+    batch_size: 32
+
+  vector_store:
+    type: "chromadb"
+    persist_directory: "data/indexes/chromadb"
+    collection_prefix: "tau_kb"
+
+  kb_index:
+    collection_name: "kb_documents"
+    chunk_size: 512
+    chunk_overlap: 64
+    preserve_policy_exceptions: true
+    preserve_document_links: true
+
+  example_index:
+    collection_name: "training_examples"
+    enabled: true
+
+  bm25:
+    enabled: true
+    as_diagnostic_baseline: true
+
+  fingerprint:
+    include_corpus_hash: true
+    include_embedding_revision: true
+    include_chunking_version: true
+
+harness:
+  mode: "agent_rag"  # simple_rag | agent_rag
+  use_examples: false
+
+  planning:
+    enabled: true  # Disabled in simple_rag mode
+    max_plan_tokens: 512
+
+  limits:
+    max_turns: 20
+    max_tool_calls: 15
+    max_repair_attempts: 3
+    max_tokens_per_turn: 4096
+    max_wall_time_seconds: 300
+
+  tool_discovery:
+    preserve_official_behavior: true
+    expose_all_upfront: false  # If true, label as modified benchmark condition
+
+  verification:
+    use_only_permitted_observations: true
+    never_use_expected_actions: true
+
+  retry_policy:
+    prevent_duplicate_state_changes: true
+    use_official_semantics: true
+
+api:
+  host: "${BACKEND_HOST}"
+  port: "${BACKEND_PORT}"
+
+model:
+  endpoint: "${BASE_SERVING_ENDPOINT}"
+  model_name: ""  # Served model name from vLLM
+  ca_bundle: "${SERVING_CA_BUNDLE}"
+  token: "${SERVING_TOKEN}"
+  temperature: 0.1
+  max_tokens: 2048

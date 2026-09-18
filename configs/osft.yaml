@@ -1,0 +1,64 @@
+# OSFT Fine-Tuning Profile
+# Applied via training_hub.osft
+
+training:
+  method: "osft"
+  seed: 42
+
+model:
+  model_id: "Qwen/Qwen3-4B-Instruct-2507"
+  model_revision: "main"
+  tokenizer_id: "Qwen/Qwen3-4B-Instruct-2507"
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"
+
+osft:
+  unfreeze_rank_ratio: 0.25
+  # OSFT decomposes weight matrices and selectively unfreezes components.
+  # Memory: accounts for decomposition + activations + optimizer states.
+
+data:
+  train_file: "data/prepared/tau-knowledge-v1/training/osft/train.jsonl"
+  validation_file: "data/prepared/tau-knowledge-v1/training/osft/validation.jsonl"
+  max_seq_length: 4096
+  loss_masking: "assistant_only"
+
+training_args:
+  output_dir: "checkpoints/osft"
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler_type: "cosine"
+  logging_steps: 10
+  eval_strategy: "steps"
+  eval_steps: 100
+  save_strategy: "steps"
+  save_steps: 100
+  save_total_limit: 3
+  bf16: true
+  gradient_checkpointing: true
+  dataloader_num_workers: 2
+  report_to: "none"
+  resume_from_checkpoint: true
+
+# Hardware overrides
+# hardware_overrides:
+#   A100_40GB:
+#     per_device_train_batch_size: 2
+#     gradient_accumulation_steps: 8
+#   T4_16GB:
+#     per_device_train_batch_size: 1
+#     gradient_accumulation_steps: 16
+#     max_seq_length: 2048
+
+export:
+  output_path: "models/osft-exported"
+  format: "huggingface"
+  validate_reload: true
+  check_shards: true
+  check_index: true
+  check_hashes: true

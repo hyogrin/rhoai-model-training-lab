@@ -1,0 +1,63 @@
+# Data Release / Bundle Configuration
+# Used to build and fetch prepared dataset bundles
+
+bundle:
+  name: "tau-knowledge"
+  version: "v1"
+  profile: "lab"  # smoke | lab
+  base_path: "data/prepared/tau-knowledge-v1"
+
+model_profile:
+  model_id: "Qwen/Qwen3-4B-Instruct-2507"
+  model_revision: "main"
+  tokenizer_id: "Qwen/Qwen3-4B-Instruct-2507"
+  max_seq_length: 4096
+  chat_template_hash: ""  # Computed at build time
+
+contents:
+  manifest: "manifest.json"
+  checksums: "checksums.sha256"
+  canonical:
+    train: "canonical/train.jsonl"
+    validation: "canonical/validation.jsonl"
+  training:
+    lora:
+      train: "training/lora/train.jsonl"
+      validation: "training/lora/validation.jsonl"
+      config: "configs/lora.yaml"
+    osft:
+      train: "training/osft/train.jsonl"
+      validation: "training/osft/validation.jsonl"
+      config: "configs/osft.yaml"
+  kb:
+    documents: "kb/documents.jsonl"
+  examples:
+    train_examples: "examples/train_examples.jsonl"
+  metadata:
+    provenance: "metadata/provenance.jsonl"
+    splits: "metadata/splits.json"
+  reports:
+    quality_json: "reports/quality.json"
+    quality_md: "reports/quality.md"
+    backend_validation: "reports/backend-validation.json"
+  dataset_card: "DATASET_CARD.md"
+  licenses_dir: "LICENSES/"
+
+fetch:
+  sources:
+    - type: "local"
+      path: "data/prepared/tau-knowledge-v1"
+    - type: "s3"
+      bucket: "${S3_BUCKET}"
+      prefix: "datasets/tau-knowledge-v1"
+  checksum_verify: true
+  fail_on_missing: true
+  never_trigger_sdg: true
+
+publish:
+  targets:
+    - type: "s3"
+      bucket: "${S3_BUCKET}"
+      prefix: "datasets/"
+    - type: "local"
+      path: "data/prepared/"

@@ -1,0 +1,48 @@
+# Model Serving Endpoint Configuration (Example)
+# Copy and customize for your environment. Do NOT commit secrets.
+
+endpoints:
+  base:
+    url: "https://base-model-predictor.apps.cluster.example.com/v1"
+    model_name: "Qwen3-4B-Instruct-2507"
+    token: ""
+    ca_bundle: ""
+    verify_ssl: true
+    tool_parser: "hermes"
+    chat_template: ""  # Use model default
+
+  lora:
+    url: "https://lora-model-predictor.apps.cluster.example.com/v1"
+    model_name: "Qwen3-4B-Instruct-2507-lora"
+    token: ""
+    ca_bundle: ""
+    verify_ssl: true
+    tool_parser: "hermes"
+    chat_template: ""
+
+  osft:
+    url: "https://osft-model-predictor.apps.cluster.example.com/v1"
+    model_name: "Qwen3-4B-Instruct-2507-osft"
+    token: ""
+    ca_bundle: ""
+    verify_ssl: true
+    tool_parser: "hermes"
+    chat_template: ""
+
+  teacher:
+    url: "${SDG_TEACHER_ENDPOINT}"
+    model_name: "${SDG_TEACHER_MODEL}"
+    api_key: "${SDG_TEACHER_API_KEY}"
+    timeout: 120
+    max_concurrent: 4
+
+  user_simulator:
+    url: "${USER_SIMULATOR_ENDPOINT}"
+    model_name: "${USER_SIMULATOR_MODEL}"
+    api_key: "${USER_SIMULATOR_API_KEY}"
+    timeout: 60
+
+  embedding:
+    url: "${EMBEDDING_ENDPOINT}"
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    type: "local"  # local | endpoint

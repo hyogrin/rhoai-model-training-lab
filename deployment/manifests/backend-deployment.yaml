@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rhoai-lab-backend
+  namespace: rhoai-lab
+  labels:
+    app: rhoai-lab-backend
+    app.kubernetes.io/name: rhoai-lab-backend
+    app.kubernetes.io/part-of: rhoai-model-training-lab
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rhoai-lab-backend
+  template:
+    metadata:
+      labels:
+        app: rhoai-lab-backend
+        app.kubernetes.io/name: rhoai-lab-backend
+    spec:
+      containers:
+        - name: backend
+          image: quay.io/rhoai-lab/backend:latest
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+              name: http
+          env:
+            - name: BASE_SERVING_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rhoai-lab-config
+                  key: base_serving_endpoint
+            - name: LORA_SERVING_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rhoai-lab-config
+                  key: lora_serving_endpoint
+                  optional: true
+            - name: OSFT_SERVING_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rhoai-lab-config
+                  key: osft_serving_endpoint
+                  optional: true
+            - name: SERVING_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rhoai-lab-secrets
+                  key: serving_token
+                  optional: true
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: rhoai-lab-config
+                  key: mlflow_tracking_uri
+                  optional: true
+            - name: BUNDLE_PATH
+              value: /data/bundles/tau-knowledge-v1
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: data-pvc
+              mountPath: /data
+            - name: config-volume
+              mountPath: /app/configs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: data-pvc
+          persistentVolumeClaim:
+            claimName: rhoai-lab-data
+        - name: config-volume
+          configMap:
+            name: rhoai-lab-config
+            items:
+              - key: rag.yaml
+                path: rag.yaml
+              - key: eval.yaml
+                path: eval.yaml
+      securityContext:
+        runAsNonRoot: true
+      restartPolicy: Always

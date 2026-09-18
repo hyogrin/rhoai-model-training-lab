@@ -1,0 +1,82 @@
+# Synthetic Data Generation Configuration
+# Used with sdg_hub for generating training examples
+
+pipeline:
+  name: "tau-knowledge-banking-sdg"
+  version: "0.1.0"
+  checkpointing: true
+  checkpoint_path: "data/checkpoints/sdg"
+  resume_from_checkpoint: true
+
+teacher:
+  endpoint: "${SDG_TEACHER_ENDPOINT}"
+  api_key: "${SDG_TEACHER_API_KEY}"
+  model: "${SDG_TEACHER_MODEL}"
+  max_concurrent: 4
+  timeout_seconds: 120
+  retry_attempts: 3
+  retry_backoff_base: 2.0
+  budget_limit_usd: 50.0
+
+generation:
+  seed: 42
+  target_counts:
+    smoke:
+      total: 64
+      policy_qa: 20
+      policy_application: 16
+      tool_selection: 13
+      trajectory: 10
+      clarification: 5
+    lab:
+      total: 3000
+      policy_qa: 900       # ~30%
+      policy_application: 750  # ~25%
+      tool_selection: 600   # ~20%
+      trajectory: 450       # ~15%
+      clarification: 300    # ~10%
+
+  schemas:
+    policy_qa:
+      flow: "flows/policy_qa.yaml"
+      max_tokens: 1024
+      temperature: 0.7
+    policy_application:
+      flow: "flows/policy_application.yaml"
+      max_tokens: 1536
+      temperature: 0.7
+    tool_selection:
+      flow: "flows/tool_selection.yaml"
+      max_tokens: 2048
+      temperature: 0.6
+    trajectory:
+      flow: "flows/trajectory.yaml"
+      max_tokens: 4096
+      temperature: 0.6
+      replay_validation: true
+    clarification:
+      flow: "flows/clarification.yaml"
+      max_tokens: 1024
+      temperature: 0.7
+
+validation:
+  independent_validator: true
+  validator_model: "${SDG_TEACHER_MODEL}"
+  schema_validation: true
+  grounding_check: true
+  condition_check: true
+  tool_schema_check: true
+  conversation_order_check: true
+  simulation_replay: true
+  deduplication:
+    exact: true
+    near_duplicate_threshold: 0.85
+  contamination_check:
+    enabled: true
+    isolated_process: true
+
+output:
+  canonical_path: "data/synthetic/canonical"
+  rejected_path: "data/synthetic/rejected"
+  logs_path: "data/synthetic/logs"
+  usage_accounting_path: "data/synthetic/usage.json"

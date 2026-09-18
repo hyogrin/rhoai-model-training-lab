@@ -1,0 +1,72 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen3-4b-osft
+  namespace: rhoai-lab
+  labels:
+    opendatahub.io/dashboard: "true"
+    app.kubernetes.io/part-of: rhoai-model-training-lab
+    model-variant: osft
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-runtime
+      storageUri: s3://rhoai-models/qwen3-4b-osft-exported/
+    containers:
+      - name: kserve-container
+        image: quay.io/modh/vllm:rhoai-2.20-cuda
+        args:
+          - "--model"
+          - "/mnt/models"
+          - "--served-model-name"
+          - "qwen3-4b-osft"
+          - "--dtype"
+          - "bfloat16"
+          - "--max-model-len"
+          - "4096"
+          - "--tool-parser-plugin"
+          - "hermes"
+          - "--enable-auto-tool-choice"
+          - "--gpu-memory-utilization"
+          - "0.90"
+        env:
+          - name: HF_HOME
+            value: /tmp/hf_cache
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
+            memory: "24Gi"
+            cpu: "4"
+        ports:
+          - containerPort: 8000
+            protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 5
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 30

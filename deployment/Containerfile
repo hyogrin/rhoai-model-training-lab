@@ -1,0 +1,79 @@
+# Multi-stage build for the RHOAI Model Training Lab backend
+#
+# Stage 1: Build the Python wheel
+# Stage 2: Runtime with uvicorn, non-root user, arbitrary UID support
+
+# ============================================================
+# Stage 1: Build
+# ============================================================
+FROM registry.access.redhat.com/ubi9/python-311:latest AS builder
+
+USER 0
+
+WORKDIR /build
+
+COPY pyproject.toml ./
+COPY src/ ./src/
+
+RUN pip install --no-cache-dir build && \
+    python -m build --wheel --outdir /build/dist
+
+# ============================================================
+# Stage 2: Runtime
+# ============================================================
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+LABEL name="rhoai-model-training-lab-backend" \
+      version="0.1.0" \
+      summary="RHOAI Model Training Lab — RAG Harness Backend" \
+      description="Serves the RAG + planning harness for τ-Knowledge banking" \
+      io.k8s.display-name="RHOAI Lab Backend" \
+      io.openshift.tags="ai,ml,rag,banking"
+
+USER 0
+
+# Install runtime dependencies
+COPY --from=builder /build/dist/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir /tmp/wheels/*.whl && \
+    pip install --no-cache-dir \
+        "fastapi>=0.111" \
+        "uvicorn[standard]>=0.30" \
+        "sentence-transformers>=3.0" \
+        "rank-bm25>=0.2" \
+        "chromadb>=0.5" \
+        "httpx>=0.27" && \
+    rm -rf /tmp/wheels
+
+# Create application directory and data directories
+RUN mkdir -p /app /data/indexes /data/bundles /data/tracking && \
+    chgrp -R 0 /app /data && \
+    chmod -R g=u /app /data
+
+WORKDIR /app
+
+# Copy configuration files
+COPY configs/ /app/configs/
+
+# Arbitrary UID support for OpenShift:
+# OpenShift runs containers with an arbitrary UID that belongs to the root group (GID 0).
+# Ensure all directories and files are group-writable.
+RUN chmod -R g=u /app && \
+    chmod g=u /etc/passwd
+
+# Non-root user (UID 1001, GID 0 for OpenShift compatibility)
+USER 1001
+
+# Expose the backend port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import httpx; r = httpx.get('http://localhost:8000/healthz', timeout=5); r.raise_for_status()" || exit 1
+
+# Default entrypoint: start uvicorn
+ENTRYPOINT ["python", "-m", "uvicorn"]
+CMD ["rhoai_model_training_lab.api:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--log-level", "info"]

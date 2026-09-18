@@ -1,0 +1,21 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rhoai-lab-backend
+  namespace: rhoai-lab
+  labels:
+    app: rhoai-lab-backend
+    app.kubernetes.io/name: rhoai-lab-backend
+    app.kubernetes.io/part-of: rhoai-model-training-lab
+    app.kubernetes.io/component: backend
+spec:
+  to:
+    kind: Service
+    name: rhoai-lab-backend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

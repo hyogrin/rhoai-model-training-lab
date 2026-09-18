@@ -1,0 +1,116 @@
+# Evaluation Configuration
+
+general:
+  seed: 42
+  no_mlflow: false
+  output_dir: "data/evaluation/results"
+  trace_dir: "data/evaluation/traces"
+
+mlflow:
+  tracking_uri: "${MLFLOW_TRACKING_URI}"
+  experiment_name: "${MLFLOW_EXPERIMENT_EVAL}"
+  artifact_max_size_mb: 100
+
+tracks:
+  prepared_diagnostics:
+    enabled: true
+    holdout_path: "data/prepared/tau-knowledge-v1/canonical/validation.jsonl"
+    matched_context: true  # Give all models identical KB excerpts
+    types:
+      - policy_qa
+      - policy_application
+      - tool_selection
+      - clarification
+    scoring:
+      answer_accuracy: true
+      condition_check: true
+      tool_name_match: true
+      tool_args_match: true
+      grounding_check: true
+    judge:
+      model: "${EVAL_JUDGE_MODEL}"
+      endpoint: "${EVAL_JUDGE_ENDPOINT}"
+      api_key: "${EVAL_JUDGE_API_KEY}"
+      rubric: "configs/eval_rubrics/diagnostics.yaml"
+      sampled_review: true
+      review_sample_size: 20
+
+  tau_episodes:
+    enabled: true
+    tau_version: "${TAU_BENCH_VERSION}"
+    domain: "banking_knowledge"
+    task_split: ""  # Determined by τ-bench version
+    trials: 3
+    limit: null  # null = all available tasks
+    smoke_limit: 5
+    smoke_trials: 1
+    variants:
+      - name: "base_no_knowledge"
+        model_endpoint: "base"
+        knowledge_access: "no_knowledge"
+      - name: "lora_no_knowledge"
+        model_endpoint: "lora"
+        knowledge_access: "no_knowledge"
+      - name: "osft_no_knowledge"
+        model_endpoint: "osft"
+        knowledge_access: "no_knowledge"
+      - name: "base_rag"
+        model_endpoint: "base"
+        knowledge_access: "rag"
+      - name: "lora_rag"
+        model_endpoint: "lora"
+        knowledge_access: "rag"
+      - name: "osft_rag"
+        model_endpoint: "osft"
+        knowledge_access: "rag"
+    ablations:
+      - name: "base_simple_rag"
+        model_endpoint: "base"
+        mode: "simple_rag"
+      - name: "base_agent_rag"
+        model_endpoint: "base"
+        mode: "agent_rag"
+      - name: "base_rag_no_examples"
+        model_endpoint: "base"
+        use_examples: false
+      - name: "base_rag_with_examples"
+        model_endpoint: "base"
+        use_examples: true
+    grading:
+      use_official_grader: true
+      grader_version: ""
+      scorer_revision: ""
+    budgets:
+      max_turns: 20
+      max_tool_calls: 15
+      max_tokens: 8192
+      max_wall_time_seconds: 300
+    confidence:
+      method: "paired_bootstrap"
+      n_bootstrap: 10000
+      alpha: 0.05
+
+  retention:
+    enabled: true
+    benchmarks:
+      - name: "arc_challenge"
+        type: "generated_answer"
+        dataset: "allenai/ai2_arc"
+        subset: "ARC-Challenge"
+        sample_size: 100
+        seed: 42
+      # - name: "ifeval"
+      #   type: "instruction_following"
+      #   enabled: false  # Enable after verifying official implementation
+    disable_kb_rag: true
+    disable_banking_system_prompt: true
+
+reporting:
+  per_task_jsonl: true
+  per_trial_jsonl: true
+  failure_log: true
+  trace_log: true
+  summary_json: true
+  comparison_table: true
+  plots: true
+  secret_redaction: true
