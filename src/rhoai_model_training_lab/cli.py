@@ -168,14 +168,25 @@ def preflight(ctx: click.Context) -> None:
     mlflow_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     if mlflow_uri:
         try:
-            import mlflow
+            import httpx
 
-            mlflow.set_tracking_uri(mlflow_uri)
-            experiments = mlflow.search_experiments(max_results=1)
-            console.print(f"  ✅ MLflow reachable at {mlflow_uri}")
-            checks_passed += 1
+            resp = httpx.get(
+                f"{mlflow_uri.rstrip('/')}/api/2.0/mlflow/experiments/search",
+                params={"max_results": "1"},
+                timeout=10,
+                verify=False,
+            )
+            if resp.status_code == 200:
+                console.print(f"  ✅ MLflow reachable at {mlflow_uri}")
+                checks_passed += 1
+            elif resp.status_code in (401, 403):
+                console.print(f"  ✅ MLflow reachable (auth required: HTTP {resp.status_code})")
+                checks_passed += 1
+            else:
+                console.print(f"  ⚠️  MLflow returned HTTP {resp.status_code}")
+                checks_warned += 1
         except ImportError:
-            console.print("  ⚠️  mlflow not installed. Install with: pip install mlflow")
+            console.print("  ⚠️  httpx not installed. Install with: uv sync")
             checks_warned += 1
         except Exception as exc:
             console.print(f"  ❌ MLflow connection failed: {exc}")

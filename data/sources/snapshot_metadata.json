@@ -1,0 +1,32 @@
+{
+  "tau_version": "v1.0.1",
+  "tau_commit_sha": "",
+  "domain": "banking_knowledge",
+  "extracted": {
+    "kb_documents": 698,
+    "policy_facts": 258,
+    "tool_schemas": 72,
+    "eval_tasks_reserved": 97
+  },
+  "split_config": {
+    "method": "scenario_family",
+    "train_ratio": 0.85,
+    "validation_ratio": 0.15,
+    "seed": 42,
+    "contamination_check": true,
+    "family_isolation": true
+  },
+  "quality_gates": {
+    "min_acceptance_rate": 0.7,
+    "required_types": [
+      "policy_qa",
+      "policy_application",
+      "tool_selection",
+      "trajectory",
+      "clarification"
+    ],
+    "min_tool_examples": 50,
+    "min_trajectory_examples": 30,
+    "human_review_sample_size": 20
+  }
+}

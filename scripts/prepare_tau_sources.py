@@ -23,16 +23,17 @@ console = Console()
 def inspect_tau_bench(tau_cfg: dict) -> dict:
     """Inspect τ-bench installation and extract domain metadata.
 
-    Returns a dict with kb_path, policies, tools, tasks info.
+    Uses the τ2 domain-specific API (get_knowledge_base, get_tasks)
+    rather than a generic load_domain call.
+
+    Returns a dict with kb, tasks, tools info and raw objects.
     """
     version = tau_cfg.get("version", "")
     domain = tau_cfg.get("domain", "banking_knowledge")
-    install_path = tau_cfg.get("install_path", "")
 
     info: dict = {
         "version": version,
         "domain": domain,
-        "install_path": install_path,
         "kb_found": False,
         "policies_found": False,
         "tools_found": False,
@@ -40,35 +41,38 @@ def inspect_tau_bench(tau_cfg: dict) -> dict:
         "task_count": 0,
     }
 
-    if not install_path:
-        console.print("[yellow]τ-bench install_path not set — attempting import[/yellow]")
-        try:
-            import tau2  # noqa: F401
-            console.print("[green]τ-bench package importable[/green]")
-        except ImportError:
-            console.print("[red]τ-bench not installed. Set tau_bench.install_path or pip install tau2-bench[/red]")
-            return info
-
     try:
-        from tau2.domains import load_domain
+        from tau2.domains.banking_knowledge import get_knowledge_base, get_tasks
+        from tau2.domains.banking_knowledge.tools import KnowledgeTools
 
-        domain_data = load_domain(domain)
-
-        if hasattr(domain_data, "kb") or hasattr(domain_data, "knowledge_base"):
+        kb = get_knowledge_base()
+        if kb is not None:
+            docs = kb.get_all_documents() if hasattr(kb, "get_all_documents") else kb.documents
             info["kb_found"] = True
-        if hasattr(domain_data, "policies") or hasattr(domain_data, "rules"):
-            info["policies_found"] = True
-        if hasattr(domain_data, "tools") or hasattr(domain_data, "tool_schemas"):
-            info["tools_found"] = True
-        if hasattr(domain_data, "tasks"):
-            info["tasks_found"] = True
-            info["task_count"] = len(domain_data.tasks) if hasattr(domain_data.tasks, "__len__") else 0
+            info["kb"] = kb
+            info["kb_documents"] = docs
+            console.print(f"[green]KB loaded: {len(docs)} documents[/green]")
 
-        info["domain_data"] = domain_data
+        tasks = get_tasks()
+        if tasks:
+            info["tasks_found"] = True
+            info["task_count"] = len(tasks)
+            info["tasks"] = tasks
+            console.print(f"[green]Tasks loaded: {len(tasks)} tasks[/green]")
+
+        tool_names = [
+            a for a in dir(KnowledgeTools)
+            if not a.startswith("_") and callable(getattr(KnowledgeTools, a, None))
+        ]
+        if tool_names:
+            info["tools_found"] = True
+            info["tool_names"] = tool_names
+            console.print(f"[green]Tools found: {len(tool_names)} tools[/green]")
+
     except ImportError:
-        console.print("[yellow]Could not import τ-bench domain loader — using fallback inspection[/yellow]")
+        console.print("[yellow]Could not import τ2 banking_knowledge domain[/yellow]")
     except Exception as exc:
-        console.print(f"[yellow]τ-bench domain load failed: {exc}[/yellow]")
+        console.print(f"[yellow]τ-bench domain inspection failed: {exc}[/yellow]")
 
     return info
 
@@ -79,38 +83,23 @@ def extract_kb_snapshot(domain_info: dict, output_path: Path) -> int:
     Returns the number of documents extracted.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    domain_data = domain_info.get("domain_data")
-    if domain_data is None:
-        console.print("[yellow]No domain data available — writing empty snapshot[/yellow]")
+
+    kb_docs = domain_info.get("kb_documents")
+    if not kb_docs:
+        console.print("[yellow]No KB documents available — writing empty snapshot[/yellow]")
         output_path.write_text("")
         return 0
 
     documents: list[dict] = []
-
-    kb = getattr(domain_data, "kb", None) or getattr(domain_data, "knowledge_base", None)
-    if kb is None:
-        console.print("[yellow]KB not found in domain data[/yellow]")
-        output_path.write_text("")
-        return 0
-
-    if isinstance(kb, list):
-        for i, doc in enumerate(kb):
-            if isinstance(doc, dict):
-                doc.setdefault("doc_id", f"kb-doc-{i:04d}")
-                documents.append(doc)
-            elif isinstance(doc, str):
-                documents.append({"doc_id": f"kb-doc-{i:04d}", "text": doc})
-            else:
-                doc_dict = doc.__dict__ if hasattr(doc, "__dict__") else {"text": str(doc)}
-                doc_dict.setdefault("doc_id", f"kb-doc-{i:04d}")
-                documents.append(doc_dict)
-    elif isinstance(kb, dict):
-        for key, value in kb.items():
-            if isinstance(value, str):
-                documents.append({"doc_id": key, "text": value})
-            elif isinstance(value, dict):
-                value.setdefault("doc_id", key)
-                documents.append(value)
+    for doc in kb_docs:
+        if isinstance(doc, dict):
+            documents.append(doc)
+        elif hasattr(doc, "model_dump"):
+            documents.append(doc.model_dump())
+        elif hasattr(doc, "__dict__"):
+            documents.append(doc.__dict__)
+        else:
+            documents.append({"text": str(doc)})
 
     with open(output_path, "w") as f:
         for doc in documents:
@@ -120,40 +109,37 @@ def extract_kb_snapshot(domain_info: dict, output_path: Path) -> int:
 
 
 def extract_policy_facts(domain_info: dict, output_path: Path) -> int:
-    """Extract structured policy facts from the domain.
+    """Extract policy facts from KB documents.
+
+    In banking_knowledge, policies are embedded within KB documents.
+    We extract documents whose content contains policy-like keywords.
 
     Returns the number of policy facts extracted.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    domain_data = domain_info.get("domain_data")
-    if domain_data is None:
+
+    kb_docs = domain_info.get("kb_documents")
+    if not kb_docs:
         output_path.write_text("")
         return 0
 
-    policies = getattr(domain_data, "policies", None) or getattr(domain_data, "rules", None)
-    if policies is None:
-        output_path.write_text("")
-        return 0
+    policy_keywords = ["policy", "rule", "requirement", "must", "shall", "prohibited", "allowed"]
 
     facts: list[dict] = []
-    if isinstance(policies, list):
-        for i, policy in enumerate(policies):
-            if isinstance(policy, dict):
-                policy.setdefault("policy_id", f"policy-{i:04d}")
-                facts.append(policy)
-            elif isinstance(policy, str):
-                facts.append({"policy_id": f"policy-{i:04d}", "text": policy})
-            else:
-                p_dict = policy.__dict__ if hasattr(policy, "__dict__") else {"text": str(policy)}
-                p_dict.setdefault("policy_id", f"policy-{i:04d}")
-                facts.append(p_dict)
-    elif isinstance(policies, dict):
-        for key, value in policies.items():
-            if isinstance(value, str):
-                facts.append({"policy_id": key, "text": value})
-            elif isinstance(value, dict):
-                value.setdefault("policy_id", key)
-                facts.append(value)
+    for doc in kb_docs:
+        if hasattr(doc, "model_dump"):
+            d = doc.model_dump()
+        elif hasattr(doc, "__dict__"):
+            d = doc.__dict__
+        elif isinstance(doc, dict):
+            d = doc
+        else:
+            continue
+
+        content = d.get("content", d.get("text", "")).lower()
+        if any(kw in content for kw in policy_keywords):
+            d.setdefault("policy_id", d.get("id", f"policy-{len(facts):04d}"))
+            facts.append(d)
 
     with open(output_path, "w") as f:
         for fact in facts:
@@ -168,28 +154,15 @@ def extract_tool_schemas(domain_info: dict, output_path: Path) -> int:
     Returns the number of tool schemas extracted.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    domain_data = domain_info.get("domain_data")
-    if domain_data is None:
-        output_path.write_text("")
-        return 0
 
-    tools = getattr(domain_data, "tools", None) or getattr(domain_data, "tool_schemas", None)
-    if tools is None:
+    tool_names = domain_info.get("tool_names")
+    if not tool_names:
         output_path.write_text("")
         return 0
 
     schemas: list[dict] = []
-    if isinstance(tools, list):
-        for tool in tools:
-            if isinstance(tool, dict):
-                schemas.append(tool)
-            else:
-                schemas.append(tool.__dict__ if hasattr(tool, "__dict__") else {"name": str(tool)})
-    elif isinstance(tools, dict):
-        for name, schema in tools.items():
-            if isinstance(schema, dict):
-                schema.setdefault("name", name)
-                schemas.append(schema)
+    for name in tool_names:
+        schemas.append({"name": name})
 
     with open(output_path, "w") as f:
         for schema in schemas:
@@ -204,37 +177,28 @@ def reserve_eval_tasks(domain_info: dict, splits_cfg: dict, output_path: Path) -
     Returns split statistics.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    domain_data = domain_info.get("domain_data")
-    seed = splits_cfg.get("seed", 42)
+
+    tasks = domain_info.get("tasks", [])
 
     result = {
-        "total_tasks": 0,
-        "eval_reserved": 0,
+        "total_tasks": len(tasks),
+        "eval_reserved": len(tasks),
         "train_eligible": 0,
         "method": splits_cfg.get("method", "scenario_family"),
     }
 
-    if domain_data is None or not hasattr(domain_data, "tasks"):
+    if not tasks:
         console.print("[yellow]No tasks found — all training data will come from SDG[/yellow]")
-        json.dump(result, open(output_path, "w"), indent=2)
-        return result
+    else:
+        console.print(
+            f"[bold]Task reservation:[/bold] {result['total_tasks']} total, "
+            f"{result['eval_reserved']} reserved for eval, "
+            f"{result['train_eligible']} available for training seeds"
+        )
+        console.print("[dim]All official tasks reserved for evaluation. Training uses SDG from KB + independent scenarios.[/dim]")
 
-    tasks = domain_data.tasks
-    if hasattr(tasks, "__len__"):
-        result["total_tasks"] = len(tasks)
-
-    # Reserve ALL official tasks for evaluation (safe default)
-    result["eval_reserved"] = result["total_tasks"]
-    result["train_eligible"] = 0
-
-    console.print(
-        f"[bold]Task reservation:[/bold] {result['total_tasks']} total, "
-        f"{result['eval_reserved']} reserved for eval, "
-        f"{result['train_eligible']} available for training seeds"
-    )
-    console.print("[dim]All official tasks reserved for evaluation. Training uses SDG from KB + independent scenarios.[/dim]")
-
-    json.dump(result, open(output_path, "w"), indent=2)
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
     return result
 
 

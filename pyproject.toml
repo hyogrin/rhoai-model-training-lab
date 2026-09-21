@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "RHOAI 3.5 τ-Knowledge banking model training lab — LoRA, OSFT, RAG, and evaluation"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 authors = [{ name = "RHOAI Lab Team" }]
 
 dependencies = [
@@ -28,6 +28,7 @@ sdg = [
     "openai>=1.30",
     "tiktoken>=0.7",
     "jsonschema>=4.22",
+    "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@v1.0.1",
 ]
 lora = [
     "training_hub>=0.1",
@@ -64,6 +65,7 @@ eval = [
     "matplotlib>=3.9",
     "seaborn>=0.13",
     "openai>=1.30",
+    "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@v1.0.1",
 ]
 all = [
     "rhoai-model-training-lab[sdg,lora,osft,backend,eval]",
@@ -77,6 +79,9 @@ dev = [
 
 [project.scripts]
 rhoai-lab = "rhoai_model_training_lab.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rhoai_model_training_lab"]

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run SDG pipeline to generate synthetic training data (authoring path).
 
-Uses sdg_hub to generate policy QA, policy application, tool selection,
-trajectory, and clarification examples from τ-Knowledge banking sources.
+Uses sdg_hub Knowledge Tuning flows to generate QA pairs from
+τ-Knowledge banking_knowledge KB documents.
 
 Usage:
     python scripts/generate_synthetic.py --config configs/sdg.yaml [--profile smoke|lab]
@@ -14,226 +14,127 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 
 console = Console()
 
-
-class BudgetTracker:
-    """Track API usage budget."""
-
-    def __init__(self, limit_usd: float) -> None:
-        self.limit_usd = limit_usd
-        self.total_tokens = 0
-        self.total_calls = 0
-        self.estimated_cost_usd = 0.0
-        self.start_time = time.time()
-
-    def record_call(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
-        self.total_calls += 1
-        self.total_tokens += prompt_tokens + completion_tokens
-        # Conservative cost estimate ($0.01 / 1K tokens)
-        self.estimated_cost_usd = self.total_tokens * 0.00001
-
-    @property
-    def budget_remaining(self) -> float:
-        return max(0.0, self.limit_usd - self.estimated_cost_usd)
-
-    @property
-    def budget_exceeded(self) -> bool:
-        return self.estimated_cost_usd >= self.limit_usd
-
-    @property
-    def elapsed_seconds(self) -> float:
-        return time.time() - self.start_time
-
-    def summary(self) -> dict:
-        return {
-            "total_calls": self.total_calls,
-            "total_tokens": self.total_tokens,
-            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
-            "budget_limit_usd": self.limit_usd,
-            "budget_remaining_usd": round(self.budget_remaining, 4),
-            "elapsed_seconds": round(self.elapsed_seconds, 1),
-        }
+# sdg_hub flow IDs for Knowledge Tuning (English)
+# key_facts: atomic facts → QA pairs — most reliable with diverse teacher models
+KNOWLEDGE_FLOWS = {
+    "key_facts": "heavy-heart-77",
+}
 
 
-class CheckpointManager:
-    """Manage generation checkpoints for resume."""
+def load_kb_documents(sources_path: Path) -> pd.DataFrame:
+    """Load KB documents from JSONL into a DataFrame for sdg_hub."""
+    kb_path = sources_path / "kb" / "documents.jsonl"
+    if not kb_path.exists():
+        console.print(f"[red]KB documents not found: {kb_path}[/red]")
+        console.print("Run notebook 01_prepare_tau_sources first.")
+        sys.exit(1)
 
-    def __init__(self, checkpoint_path: Path) -> None:
-        self.checkpoint_path = checkpoint_path
-        self.checkpoint_path.mkdir(parents=True, exist_ok=True)
-        self.state_file = checkpoint_path / "state.json"
+    docs = []
+    with open(kb_path) as f:
+        for line in f:
+            if line.strip():
+                docs.append(json.loads(line))
 
-    def load_state(self) -> dict:
-        if self.state_file.exists():
-            try:
-                return json.loads(self.state_file.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-        return {"completed_types": {}, "generated_ids": []}
+    if not docs:
+        console.print("[red]No documents in KB snapshot.[/red]")
+        sys.exit(1)
 
-    def save_state(self, state: dict) -> None:
-        self.state_file.write_text(json.dumps(state, indent=2))
+    df = pd.DataFrame(docs)
 
-    def save_samples(self, sample_type: str, samples: list[dict]) -> None:
-        outfile = self.checkpoint_path / f"{sample_type}.jsonl"
-        with open(outfile, "a") as f:
-            for sample in samples:
-                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+    # Map to sdg_hub expected columns
+    if "content" in df.columns and "document" not in df.columns:
+        df["document"] = df["content"]
+    if "title" in df.columns and "document_outline" not in df.columns:
+        df["document_outline"] = df["title"]
+
+    # Add domain column
+    df["domain"] = "banking_knowledge"
+
+    console.print(f"[green]Loaded {len(df)} KB documents[/green]")
+    return df
 
 
-def run_sdg_pipeline(
-    config: dict,
-    profile: str,
-    budget: BudgetTracker,
-    checkpoint: CheckpointManager,
-) -> dict:
-    """Run the SDG pipeline using sdg_hub.
+def prepare_icl_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add in-context learning columns required by some flows."""
+    if len(df) < 2:
+        return df
 
-    Returns summary statistics.
-    """
-    teacher_cfg = config.get("teacher", {})
-    gen_cfg = config.get("generation", {})
-    val_cfg = config.get("validation", {})
+    sample_doc = df["document"].iloc[0] if "document" in df.columns else ""
+    df["icl_document"] = sample_doc
+    df["icl_query_1"] = "What are the main policies described in this document?"
+    df["icl_query_2"] = "What conditions or exceptions apply?"
+    df["icl_query_3"] = "How does this policy affect customer accounts?"
+    return df
 
-    target_counts = gen_cfg.get("target_counts", {}).get(profile, {})
-    total_target = target_counts.get("total", 64)
-    schemas = gen_cfg.get("schemas", {})
-    seed = gen_cfg.get("seed", 42)
 
-    # Load checkpoint state for resume
-    state = checkpoint.load_state()
-    completed = state.get("completed_types", {})
+def run_flow(
+    flow_name: str,
+    flow_id: str,
+    df: pd.DataFrame,
+    model: str,
+    api_base: str,
+    api_key: str,
+    max_samples: int,
+    checkpoint_dir: str | None = None,
+    max_concurrency: int = 4,
+) -> pd.DataFrame | None:
+    """Run a single sdg_hub flow and return results."""
+    from sdg_hub import Flow, FlowRegistry
 
-    stats = {
-        "profile": profile,
-        "target_total": total_target,
-        "generated": 0,
-        "accepted": 0,
-        "rejected": 0,
-        "by_type": {},
-        "budget": {},
-        "resumed": bool(completed),
-    }
+    fr = FlowRegistry()
+    flow_path = fr.get_flow_path(flow_id)
+    if not flow_path:
+        console.print(f"[yellow]Flow {flow_id} not found in registry[/yellow]")
+        return None
 
-    # Try importing sdg_hub
+    flow = Flow.from_yaml(flow_path)
+
+    # Limit input samples
+    input_df = df.head(max_samples).copy()
+
+    # Check required columns and add ICL if needed
+    reqs = flow.get_dataset_requirements()
+    for col in reqs.required_columns:
+        if col not in input_df.columns:
+            if col.startswith("icl_"):
+                input_df = prepare_icl_columns(input_df)
+                break
+
+    # Missing columns check
+    missing = [c for c in reqs.required_columns if c not in input_df.columns]
+    if missing:
+        console.print(f"[yellow]Missing columns for {flow_name}: {missing} — skipping[/yellow]")
+        return None
+
+    # Configure model — litellm requires provider prefix (e.g. openai/model-name)
+    litellm_model = model if "/" in model else f"openai/{model}"
+    flow.set_model_config(
+        model=litellm_model,
+        api_base=api_base,
+        api_key=api_key,
+    )
+
+    console.print(f"  Running {flow_name} on {len(input_df)} documents...")
     try:
-        import sdg_hub
-        console.print(f"[green]sdg_hub version: {getattr(sdg_hub, '__version__', 'unknown')}[/green]")
-    except ImportError:
-        console.print("[red]sdg_hub not installed. Install with: pip install -e '.[sdg]'[/red]")
-        sys.exit(1)
-
-    endpoint = os.environ.get("SDG_TEACHER_ENDPOINT") or teacher_cfg.get("endpoint", "")
-    api_key = os.environ.get("SDG_TEACHER_API_KEY") or teacher_cfg.get("api_key", "")
-    model = os.environ.get("SDG_TEACHER_MODEL") or teacher_cfg.get("model", "")
-
-    if not endpoint:
-        console.print("[red]SDG_TEACHER_ENDPOINT not configured.[/red]")
-        console.print("[yellow]Set SDG_TEACHER_ENDPOINT in .env or the config file.[/yellow]")
-        sys.exit(1)
-
-    sample_types = ["policy_qa", "policy_application", "tool_selection", "trajectory", "clarification"]
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        overall_task = progress.add_task("Overall", total=total_target)
-
-        for sample_type in sample_types:
-            type_target = target_counts.get(sample_type, 0)
-            if type_target == 0:
-                continue
-
-            already_done = completed.get(sample_type, 0)
-            remaining = max(0, type_target - already_done)
-            if remaining == 0:
-                stats["by_type"][sample_type] = {"target": type_target, "generated": already_done, "accepted": already_done}
-                stats["generated"] += already_done
-                stats["accepted"] += already_done
-                progress.advance(overall_task, already_done)
-                continue
-
-            schema_cfg = schemas.get(sample_type, {})
-            flow_path = schema_cfg.get("flow", "")
-            max_tokens = schema_cfg.get("max_tokens", 1024)
-            temperature = schema_cfg.get("temperature", 0.7)
-
-            type_task = progress.add_task(f"  {sample_type}", total=remaining)
-
-            type_generated = already_done
-            type_accepted = already_done
-            type_rejected = 0
-
-            for i in range(remaining):
-                if budget.budget_exceeded:
-                    console.print(f"[yellow]Budget limit reached (${budget.limit_usd})[/yellow]")
-                    break
-
-                try:
-                    from sdg_hub import generate  # type: ignore[attr-defined]
-
-                    result = generate(
-                        flow=flow_path,
-                        endpoint=endpoint,
-                        api_key=api_key,
-                        model=model,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        seed=seed + i + already_done,
-                        sample_type=sample_type,
-                    )
-
-                    budget.record_call(
-                        prompt_tokens=result.get("usage", {}).get("prompt_tokens", 0),
-                        completion_tokens=result.get("usage", {}).get("completion_tokens", 0),
-                    )
-
-                    if result.get("status") == "accepted":
-                        type_accepted += 1
-                        samples = result.get("samples", [result])
-                        checkpoint.save_samples(sample_type, samples)
-                    else:
-                        type_rejected += 1
-
-                    type_generated += 1
-
-                except Exception as exc:
-                    console.print(f"[yellow]Generation error ({sample_type}): {exc}[/yellow]")
-                    type_rejected += 1
-                    type_generated += 1
-
-                progress.advance(type_task, 1)
-                progress.advance(overall_task, 1)
-
-            stats["by_type"][sample_type] = {
-                "target": type_target,
-                "generated": type_generated,
-                "accepted": type_accepted,
-                "rejected": type_rejected,
-            }
-            stats["generated"] += type_generated
-            stats["accepted"] += type_accepted
-            stats["rejected"] += type_rejected
-
-            # Update checkpoint
-            completed[sample_type] = type_accepted
-            state["completed_types"] = completed
-            checkpoint.save_state(state)
-
-    stats["budget"] = budget.summary()
-    return stats
+        result_df = flow.generate(
+            dataset=input_df,
+            checkpoint_dir=checkpoint_dir,
+            max_concurrency=max_concurrency,
+        )
+        console.print(f"  [green]✅ {flow_name}: {len(result_df)} samples generated[/green]")
+        return result_df
+    except Exception as exc:
+        console.print(f"  [red]❌ {flow_name} failed: {exc}[/red]")
+        return None
 
 
 def main() -> None:
@@ -241,130 +142,135 @@ def main() -> None:
         description="Generate synthetic training data using sdg_hub (authoring path).",
     )
     parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/sdg.yaml",
-        help="Path to SDG configuration (default: configs/sdg.yaml)",
+        "--config", type=str, default="configs/sdg.yaml",
+        help="Path to SDG configuration",
     )
     parser.add_argument(
-        "--profile",
-        type=str,
-        choices=["smoke", "lab"],
-        default="smoke",
-        help="Generation profile: smoke (64 samples) or lab (3000 samples)",
+        "--profile", type=str, choices=["smoke", "lab"], default="smoke",
+        help="Generation profile: smoke (quick) or lab (full)",
     )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last checkpoint",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-        help="Override output directory",
-    )
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
     args = parser.parse_args()
 
-    # Load configuration
     try:
-        from rhoai_model_training_lab.config import load_env, load_yaml_config
-
+        from rhoai_model_training_lab.config import load_env, load_yaml_config, PROJECT_ROOT
         load_env()
         config = load_yaml_config(args.config)
     except Exception as exc:
         console.print(f"[red]Failed to load config: {exc}[/red]")
         sys.exit(1)
 
-    pipeline_cfg = config.get("pipeline", {})
-    teacher_cfg = config.get("teacher", {})
+    # Endpoints
+    endpoint = os.environ.get("SDG_TEACHER_ENDPOINT", "")
+    api_key = os.environ.get("SDG_TEACHER_API_KEY", "")
+    model = os.environ.get("SDG_TEACHER_MODEL", "")
+
+    if not endpoint:
+        console.print("[red]SDG_TEACHER_ENDPOINT not set.[/red]")
+        sys.exit(1)
+
+    # Need api_base in OpenAI-compatible format: endpoint + /v1
+    api_base = endpoint.rstrip("/")
+    if not api_base.endswith("/v1"):
+        api_base += "/v1"
+
+    # Output paths
     output_cfg = config.get("output", {})
+    canonical_path = PROJECT_ROOT / output_cfg.get("canonical_path", "data/synthetic/canonical")
+    logs_path = PROJECT_ROOT / output_cfg.get("logs_path", "data/synthetic/logs")
+    checkpoint_base = PROJECT_ROOT / config.get("pipeline", {}).get("checkpoint_path", "data/checkpoints/sdg")
 
-    canonical_path = Path(args.output_dir or output_cfg.get("canonical_path", "data/synthetic/canonical"))
-    rejected_path = Path(output_cfg.get("rejected_path", "data/synthetic/rejected"))
-    logs_path = Path(output_cfg.get("logs_path", "data/synthetic/logs"))
-    checkpoint_path = Path(pipeline_cfg.get("checkpoint_path", "data/checkpoints/sdg"))
-
-    for d in (canonical_path, rejected_path, logs_path, checkpoint_path):
+    for d in (canonical_path, logs_path, checkpoint_base):
         d.mkdir(parents=True, exist_ok=True)
 
-    console.print("[bold]═══ Synthetic Data Generation ═══[/bold]")
-    console.print(f"Pipeline: {pipeline_cfg.get('name', 'unknown')} v{pipeline_cfg.get('version', '?')}")
-    console.print(f"Profile: {args.profile}")
-    console.print(f"Resume: {args.resume}")
+    # Load KB documents
+    sources_path = PROJECT_ROOT / "data" / "sources"
+    df = load_kb_documents(sources_path)
+
+    # Profile determines how many docs to process per flow
+    teacher_cfg = config.get("teacher", {})
+    max_concurrent = teacher_cfg.get("max_concurrent", 4)
+
+    profile_doc_limits = {
+        "smoke": 5,       # ~300 QA pairs — pipeline validation
+        "lab": 20,        # ~1,500 QA pairs — suitable for LoRA/OSFT lab training
+    }
+    docs_per_flow = min(profile_doc_limits.get(args.profile, 20), len(df))
+
+    console.print(f"\n[bold]═══ Synthetic Data Generation ({args.profile}) ═══[/bold]")
+    console.print(f"Model: {model}")
+    console.print(f"Documents per flow: {docs_per_flow}")
+    console.print(f"Flows: {list(KNOWLEDGE_FLOWS.keys())}")
     console.print()
 
-    budget_limit = teacher_cfg.get("budget_limit_usd", 50.0)
-    budget = BudgetTracker(limit_usd=budget_limit)
-    checkpoint = CheckpointManager(checkpoint_path)
+    start_time = time.time()
+    all_results: dict[str, pd.DataFrame] = {}
 
-    if not args.resume:
-        # Clear previous checkpoint
-        state_file = checkpoint_path / "state.json"
-        if state_file.exists():
-            state_file.unlink()
+    for flow_name, flow_id in KNOWLEDGE_FLOWS.items():
+        out_file = canonical_path / f"{flow_name}.jsonl"
 
-    # Run pipeline
-    stats = run_sdg_pipeline(config, args.profile, budget, checkpoint)
+        # Skip if output already exists (idempotent)
+        if out_file.exists() and out_file.stat().st_size > 0 and not args.resume:
+            existing = sum(1 for line in open(out_file) if line.strip())
+            console.print(f"  [cyan]⏭  {flow_name}: {existing}개 이미 존재 — 건너뜁니다 (재생성: --resume)[/cyan]")
+            all_results[flow_name] = pd.read_json(out_file, lines=True)
+            continue
 
-    # Save usage accounting
-    usage_path = Path(output_cfg.get("usage_accounting_path", "data/synthetic/usage.json"))
+        # Always use checkpoint dir for intermediate result protection
+        checkpoint_dir = str(checkpoint_base / flow_name)
+
+        result = run_flow(
+            flow_name=flow_name,
+            flow_id=flow_id,
+            df=df,
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            max_samples=docs_per_flow,
+            checkpoint_dir=checkpoint_dir,
+            max_concurrency=max_concurrent,
+        )
+        if result is not None and len(result) > 0:
+            all_results[flow_name] = result
+            result.to_json(out_file, orient="records", lines=True, force_ascii=False)
+
+    elapsed = time.time() - start_time
+
+    # Summary
+    console.print(f"\n[bold]═══ Generation Summary ═══[/bold]")
+    table = Table()
+    table.add_column("Flow", style="bold")
+    table.add_column("Samples", justify="right")
+    table.add_column("Output")
+
+    total_samples = 0
+    for flow_name, result_df in all_results.items():
+        n = len(result_df)
+        total_samples += n
+        table.add_row(flow_name, str(n), str(canonical_path / f"{flow_name}.jsonl"))
+
+    table.add_row("[bold]Total[/bold]", f"[bold]{total_samples}[/bold]", "")
+    console.print(table)
+    console.print(f"\nElapsed: {elapsed:.1f}s")
+
+    # Save usage log
+    usage_path = PROJECT_ROOT / output_cfg.get("usage_accounting_path", "data/synthetic/usage.json")
     usage_path.parent.mkdir(parents=True, exist_ok=True)
     usage_data = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "profile": args.profile,
-        "budget": stats["budget"],
-        "by_type": stats["by_type"],
+        "total_samples": total_samples,
+        "elapsed_seconds": round(elapsed, 1),
+        "flows": {k: len(v) for k, v in all_results.items()},
     }
     usage_path.write_text(json.dumps(usage_data, indent=2))
 
-    # Save generation log
-    log_file = logs_path / f"generation_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-    log_file.write_text(json.dumps(stats, indent=2))
+    if total_samples > 0:
+        console.print(f"\n[green]✅ Generation complete: {total_samples} samples[/green]")
+    else:
+        console.print("\n[red]⚠️ No samples generated. Check teacher endpoint and logs.[/red]")
 
-    # Print summary
-    console.print()
-    console.print("[bold]═══ Generation Summary ═══[/bold]")
-    table = Table()
-    table.add_column("Type", style="bold")
-    table.add_column("Target", justify="right")
-    table.add_column("Generated", justify="right")
-    table.add_column("Accepted", justify="right")
-    table.add_column("Rejected", justify="right")
-    table.add_column("Rate", justify="right")
-
-    for sample_type, type_stats in stats.get("by_type", {}).items():
-        gen = type_stats.get("generated", 0)
-        acc = type_stats.get("accepted", 0)
-        rate = f"{acc / gen * 100:.0f}%" if gen > 0 else "N/A"
-        table.add_row(
-            sample_type,
-            str(type_stats.get("target", 0)),
-            str(gen),
-            str(acc),
-            str(type_stats.get("rejected", 0)),
-            rate,
-        )
-
-    table.add_row(
-        "[bold]Total[/bold]",
-        str(stats.get("target_total", 0)),
-        str(stats.get("generated", 0)),
-        str(stats.get("accepted", 0)),
-        str(stats.get("rejected", 0)),
-        f"{stats['accepted'] / stats['generated'] * 100:.0f}%" if stats.get("generated", 0) > 0 else "N/A",
-    )
-    console.print(table)
-
-    budget_info = stats.get("budget", {})
-    console.print(f"\nBudget: ${budget_info.get('estimated_cost_usd', 0):.4f} / ${budget_info.get('budget_limit_usd', 0):.2f}")
-    console.print(f"API calls: {budget_info.get('total_calls', 0)}, tokens: {budget_info.get('total_tokens', 0)}")
-    console.print(f"Elapsed: {budget_info.get('elapsed_seconds', 0):.1f}s")
-
-    console.print()
-    console.print("[green]✅  Synthetic data generation complete.[/green]")
-    console.print(f"Output: {canonical_path}")
-    console.print("Next step: python scripts/validate_synthetic.py --config configs/data-preparation.yaml")
+    console.print("Next: python scripts/validate_synthetic.py --config configs/data-preparation.yaml")
 
 
 if __name__ == "__main__":

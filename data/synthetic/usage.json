@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-09-21T07:38:21.227940+00:00",
+  "profile": "lab",
+  "total_samples": 1414,
+  "elapsed_seconds": 0.1,
+  "flows": {
+    "key_facts": 1414
+  }
+}
