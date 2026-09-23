@@ -32,20 +32,20 @@ sdg = [
 ]
 lora = [
     "training_hub[lora]>=0.1",
-    "torch>=2.3",
-    "transformers>=4.44",
-    "peft>=0.12",
-    "datasets>=2.20",
-    "accelerate>=0.33",
-    "bitsandbytes>=0.43",
-    "trl>=0.9",
+    "torch>=2.14",
+    "transformers>=5.17",
+    "peft>=0.21",
+    "datasets>=5.0",
+    "accelerate>=1.15",
+    "bitsandbytes>=0.45",
+    "trl>=1.13",
 ]
 osft = [
     "training_hub>=0.1",
-    "torch>=2.3",
-    "transformers>=4.44",
-    "datasets>=2.20",
-    "accelerate>=0.33",
+    "torch>=2.14",
+    "transformers>=5.17",
+    "datasets>=5.0",
+    "accelerate>=1.15",
 ]
 backend = [
     "fastapi>=0.111",
