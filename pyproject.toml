@@ -12,79 +12,69 @@ requires-python = ">=3.12,<3.14"
 authors = [{ name = "RHOAI Lab Team" }]
 
 dependencies = [
-    "pyyaml==6.0.2",
-    "pydantic==2.10.3",
-    "pydantic-settings==2.7.1",
-    "python-dotenv==1.0.1",
-    "click==8.1.8",
-    "rich==13.9.4",
-    "httpx==0.28.1",
-    "jinja2==3.1.5",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "click>=8.1",
+    "rich>=13.7",
+    "httpx>=0.27",
+    "jinja2>=3.1",
 ]
-
-# ──────────────────────────────────────────────────────────
-# 버전 고정 정책:
-#   - PyPI 패키지: == 로 고정 (재현성 보장)
-#   - 내부/사내 패키지 (training_hub, sdg_hub): >= 유지
-#   - workbench 이미지 버전과 맞지 않으면
-#     pip freeze 출력으로 아래 버전을 갱신하세요.
-# ──────────────────────────────────────────────────────────
 
 [project.optional-dependencies]
 sdg = [
     "sdg_hub>=0.1",
-    "openai==1.58.1",
-    "tiktoken==0.8.0",
-    "jsonschema==4.23.0",
+    "openai>=1.30",
+    "tiktoken>=0.7",
+    "jsonschema>=4.22",
     "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@v1.0.1",
 ]
 lora = [
     "training_hub[lora]>=0.1",
-    "torch==2.14.0",
-    "transformers==5.17.0",
-    "peft==0.21.0",
-    "datasets==5.0.1",
-    "accelerate==1.15.0",
-    "bitsandbytes>=0.45",
-    "trl==1.13.0",
-    "unsloth>=2025.6",
+    "torch>=2.3",
+    "transformers>=4.44",
+    "peft>=0.12",
+    "datasets>=2.20",
+    "accelerate>=0.33",
+    "bitsandbytes>=0.43",
+    "trl>=0.9",
 ]
 osft = [
-    "training_hub[lora]>=0.1",
-    "torch==2.14.0",
-    "transformers==5.17.0",
-    "datasets==5.0.1",
-    "accelerate==1.15.0",
-    "unsloth>=2025.6",
+    "training_hub>=0.1",
+    "torch>=2.3",
+    "transformers>=4.44",
+    "datasets>=2.20",
+    "accelerate>=0.33",
 ]
 backend = [
-    "fastapi==0.115.6",
-    "uvicorn[standard]==0.34.0",
-    "langgraph==0.2.60",
-    "langchain-core==0.3.29",
-    "langchain-community==0.3.14",
-    "sentence-transformers==3.3.1",
-    "rank-bm25==0.2.2",
-    "chromadb==0.5.23",
-    "numpy==1.26.4",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "langgraph>=0.2",
+    "langchain-core>=0.2",
+    "langchain-community>=0.2",
+    "sentence-transformers>=3.0",
+    "rank-bm25>=0.2",
+    "chromadb>=0.5",
+    "numpy>=1.26",
 ]
 eval = [
-    "mlflow==2.19.0",
-    "scipy==1.14.1",
-    "pandas==2.2.3",
-    "matplotlib==3.9.3",
-    "seaborn==0.13.2",
-    "openai==1.58.1",
+    "mlflow>=2.14",
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "openai>=1.30",
     "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@v1.0.1",
 ]
 all = [
     "rhoai-model-training-lab[sdg,lora,osft,backend,eval]",
 ]
 dev = [
-    "pytest==8.3.4",
-    "pytest-asyncio==0.24.0",
-    "ruff==0.8.6",
-    "mypy==1.13.0",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
 ]
 
 [project.scripts]
