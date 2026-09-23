@@ -11,12 +11,29 @@ from dotenv import load_dotenv
 
 
 def get_project_root() -> Path:
-    """Return the project root directory."""
+    """Return the project root directory.
+
+    Resolution order:
+    1. RHOAI_PROJECT_ROOT env var (set by notebook bootstrap)
+    2. Walk up from this file (works for editable install)
+    3. Walk up from cwd (works for non-editable install in notebooks)
+    4. Fallback to cwd
+    """
+    env_root = os.environ.get("RHOAI_PROJECT_ROOT")
+    if env_root:
+        return Path(env_root)
+
     current = Path(__file__).resolve()
     for parent in current.parents:
         if (parent / "pyproject.toml").exists():
             return parent
-    return Path.cwd()
+
+    cwd = Path.cwd()
+    for parent in [cwd] + list(cwd.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+
+    return cwd
 
 
 PROJECT_ROOT = get_project_root()

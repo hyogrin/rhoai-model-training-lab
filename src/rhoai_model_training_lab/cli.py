@@ -175,6 +175,7 @@ def preflight(ctx: click.Context) -> None:
                 params={"max_results": "1"},
                 timeout=10,
                 verify=False,
+                follow_redirects=True,
             )
             if resp.status_code == 200:
                 console.print(f"  ✅ MLflow reachable at {mlflow_uri}")
