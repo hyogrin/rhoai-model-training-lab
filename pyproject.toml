@@ -31,21 +31,21 @@ sdg = [
     "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@v1.0.1",
 ]
 lora = [
-    "training_hub[lora]>=0.1",
     "torch>=2.14",
     "transformers>=5.17",
     "peft>=0.21",
     "datasets>=5.0",
     "accelerate>=1.15",
     "bitsandbytes>=0.45",
-    "trl>=1.13",
+    "trl>=0.29,<1.0",
 ]
 osft = [
-    "training_hub>=0.1",
     "torch>=2.14",
     "transformers>=5.17",
+    "peft>=0.21",
     "datasets>=5.0",
     "accelerate>=1.15",
+    "trl>=0.29,<1.0",
 ]
 backend = [
     "fastapi>=0.111",
